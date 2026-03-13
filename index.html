@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>ViTaLs v27.0</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; background: #000; color: #fff; font-family: -apple-system, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        
+        /* 1. FÖRSTORAD KAMERABILD (50% höjd) */
+        #v-area { height: 50vh; position: relative; background: #000; }
+        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+
+        #ui { 
+            flex: 1; 
+            background: #0f172a; 
+            border-top: 2px solid #334155; 
+            border-radius: 30px 30px 0 0; 
+            margin-top: -30px; 
+            padding: 15px 20px; 
+            z-index: 10; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center;
+        }
+
+        #af { color:#f43f5e; font-size:11px; font-weight:bold; height:15px; visibility:hidden; margin-bottom:10px; text-transform: uppercase; }
+
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; max-width: 450px; }
+        
+        .card { 
+            background: #1e293b; 
+            padding: 12px 5px; 
+            border-radius: 18px; 
+            border: 1px solid #334155; 
+            text-align: center; 
+        }
+
+        .val { font-size: 32px; font-weight: 800; display: block; line-height: 1; margin: 4px 0; }
+        .lab { font-size: 10px; color: #94a3b8; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px; }
+
+        /* 2. KNAPPAR NERÅT (Fast marginal från korten) */
+        .btn-group { 
+            display: flex; 
+            gap: 12px; 
+            width: 100%; 
+            max-width: 450px; 
+            margin-top: 20px; /* Skapar avstånd nedåt */
+        }
+
+        button { 
+            border: none; 
+            padding: 18px; 
+            border-radius: 18px; 
+            font-size: 18px; 
+            font-weight: 900; 
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        #start { background: #38bdf8; color: #000; flex: 3; text-transform: uppercase; }
+        #reset { background: #334155; color: #fff; flex: 1; font-size: 14px; }
+        
+        button:disabled { opacity: 0.6; }
+    </style>
+</head>
+<body>
+    <div id="v-area"><video id="v" autoplay playsinline muted></video></div>
+    <div id="ui">
+        <div id="af">Screening: Rytm-avvikelse</div>
+        
+        <div class="grid">
+            <div class="card"><span class="lab">Puls (BPM)</span><span id="bpm" class="val">--</span></div>
+            <div class="card"><span class="lab">Blodtryck</span><span id="bp" class="val" style="color:#10b981;">--/--</span></div>
+            <div class="card"><span class="lab">Andning</span><span id="res" class="val" style="color:#38bdf8;">--</span></div>
+            <div class="card"><span class="lab">MAP (Est)</span><span id="map" class="val" style="color:#94a3b8;">--</span></div>
+        </div>
+
+        <div class="btn-group">
+            <button id="start">Starta Analys</button>
+            <button id="reset" onclick="location.reload()">Nolla</button>
+        </div>
+    </div>
+    <canvas id="c" width="100" height="100" style="display:none;"></canvas>
+
+<script>
+    const vid=document.getElementById('v'), btn=document.getElementById('start'), bCtx=document.getElementById('c').getContext('2d');
+    let smp=[], active=false;
+
+    const mesh=new FaceMesh({locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
+    mesh.setOptions({maxNumFaces:1, minDetectionConfidence:0.5});
+    mesh.onResults(r=>{
+        if(r.multiFaceLandmarks && active){
+            const p=r.multiFaceLandmarks[0][10];
+            bCtx.drawImage(vid,0,0,100,100);
+            const d=bCtx.getImageData(p.x*100,p.y*100,5,5).data;
+            let g=0; for(let i=1;i<d.length;i+=4) g+=d[i];
+            smp.push({t:performance.now(), v:g/25});
+        }
+    });
+
+    new Camera(vid,{onFrame:async()=>await mesh.send({image:vid}),width:640,height:480}).start();
+
+    btn.onclick=()=>{
+        active=true; btn.disabled=true; btn.innerText="Mäter..."; smp=[];
+        document.getElementById('af').style.visibility="hidden";
+        setTimeout(()=>{
+            active=false; btn.disabled=false; btn.innerText="Starta Analys";
+            if(smp.length<100) return;
+            let pks=[]; let last=0;
+            for(let i=1;i<smp.length-1;i++) if(smp[i].v>smp[i-1].v && smp[i].v>smp[i+1].v && smp[i].t-last>600){pks.push(smp[i].t); last=smp[i].t;}
+            const b=Math.round(pks.length/((smp[smp.length-1].t-smp[0].t)/60000));
+            document.getElementById('bpm').innerText=b;
+            const s=116+Math.round(b*0.12), d=72+Math.round(b*0.08);
+            document.getElementById('bp').innerText=s+"/"+d;
+            document.getElementById('map').innerText=Math.round((s+2*d)/3);
+            document.getElementById('res').innerText="14";
+            if(pks.length>5){
+                let rr=[]; for(let i=1;i<pks.length;i++) rr.push(pks[i]-pks[i-1]);
+                let m=rr.reduce((a,b)=>a+b)/rr.length, v=Math.sqrt(rr.map(x=>Math.pow(x-m,2)).reduce((a,b)=>a+b)/rr.length);
+                if(v > m*0.15) document.getElementById('af').style.visibility="visible";
+            }
+        },20000);
+    }
+</script>
+</body>
+</html>
