@@ -3,20 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>ViTaLs v29.0</title>
+    <title>ViTaLs v31.0</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
     <style>
         * { box-sizing: border-box; }
         body { margin: 0; background: #000; color: #fff; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
         #v-area { height: 45vh; position: relative; background: #000; }
-        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        .mirror { transform: scaleX(-1); } /* Speglar endast selfie-kameran */
         
         #ui { 
             flex: 1; background: #0f172a; border-top: 2px solid #334155; 
             border-radius: 30px 30px 0 0; margin-top: -20px; 
-            padding: 20px 20px 60px 20px; /* Increased bottom padding for Brave navigation bar */
-            z-index: 10; display: flex; flex-direction: column; align-items: center;
+            padding: 20px 20px 60px 20px; z-index: 10; display: flex; flex-direction: column; align-items: center;
         }
 
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; max-width: 400px; }
@@ -25,13 +25,14 @@
         .lab { font-size: 10px; color: #94a3b8; text-transform: uppercase; font-weight: bold; }
 
         .btn-group { display: flex; gap: 10px; width: 100%; max-width: 400px; margin-top: 20px; }
-        button { border: none; padding: 20px; border-radius: 20px; font-size: 18px; font-weight: 900; cursor: pointer; }
-        #start { background: #38bdf8; color: #000; flex: 3; }
-        #reset { background: #334155; color: #fff; flex: 1; font-size: 14px; }
+        button { border: none; padding: 18px; border-radius: 20px; font-size: 18px; font-weight: 900; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        #start { background: #38bdf8; color: #000; flex: 2; }
+        #flip { background: #475569; color: #fff; flex: 1; font-size: 20px; }
+        #flash { background: #475569; color: #fff; flex: 1; font-size: 20px; }
     </style>
 </head>
 <body>
-    <div id="v-area"><video id="v" autoplay playsinline muted></video></div>
+    <div id="v-area"><video id="v" autoplay playsinline muted class="mirror"></video></div>
     <div id="ui">
         <div class="grid">
             <div class="card"><span class="lab">Puls (BPM)</span><span id="bpm" class="val">--</span></div>
@@ -41,13 +42,18 @@
         </div>
         <div class="btn-group">
             <button id="start">STARTA</button>
-            <button id="reset" onclick="location.reload()">NOLLA</button>
+            <button id="flip" title="Byt kamera">🔄</button>
+            <button id="flash" title="Ficklampa">🔦</button>
         </div>
     </div>
     <canvas id="c" width="100" height="100" style="display:none;"></canvas>
+
 <script>
-    const vid=document.getElementById('v'), btn=document.getElementById('start'), bCtx=document.getElementById('c').getContext('2d');
-    let smp=[], active=false;
+    const vid=document.getElementById('v'), btn=document.getElementById('start');
+    const flipBtn=document.getElementById('flip'), flashBtn=document.getElementById('flash'), bCtx=document.getElementById('c').getContext('2d');
+    
+    let smp=[], active=false, track=null, flashOn=false, currentMode='user';
+
     const mesh=new FaceMesh({locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
     mesh.setOptions({maxNumFaces:1, minDetectionConfidence:0.5});
     mesh.onResults(r=>{
@@ -59,7 +65,38 @@
             smp.push({t:performance.now(), v:g/25});
         }
     });
-    new Camera(vid,{onFrame:async()=>await mesh.send({image:vid}),width:640,height:480}).start();
+
+    async function startCam(mode) {
+        if(track) track.stop();
+        currentMode = mode;
+        vid.classList.toggle('mirror', mode === 'user');
+        
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: mode, width: 640, height: 480 }
+        });
+        vid.srcObject = stream;
+        track = stream.getVideoTracks()[0];
+        
+        // Ficklampan är oftast bara tillgänglig på 'environment' (bakre)
+        flashBtn.style.opacity = (mode === 'user') ? "0.3" : "1";
+    }
+
+    // Starta initialt med selfie-kamera
+    startCam('user').then(() => {
+        new Camera(vid,{onFrame:async()=>await mesh.send({image:vid}),width:640,height:480}).start();
+    });
+
+    flipBtn.onclick = () => startCam(currentMode === 'user' ? 'environment' : 'user');
+
+    flashBtn.onclick = async () => {
+        if (!track || currentMode === 'user') return;
+        flashOn = !flashOn;
+        try {
+            await track.applyConstraints({ advanced: [{ torch: flashOn }] });
+            flashBtn.style.background = flashOn ? "#facc15" : "#475569";
+        } catch (e) { console.error("Torch error", e); }
+    };
+
     btn.onclick=()=>{
         active=true; btn.disabled=true; btn.innerText="MÄTER..."; smp=[];
         setTimeout(()=>{
